@@ -295,9 +295,11 @@ def load_model(
         log.rule("LOADING MODEL")
         log.info(f"Model      : {model_path.name}")
         log.info(f"Recipe     : {meta.get('recipe_id', RECIPE_ID + ' (pre-recipe checkpoint)')}")
+        trained_where = [str(v) for v in (meta.get('gpu'), meta.get('hostname'))
+                         if v and v != 'not recorded']
         log.info(
-            f"Trained    : {meta.get('trained_date', '?')} on "
-            f"{meta.get('gpu', '?')} ({meta.get('hostname', '?')})"
+            f"Trained    : {meta.get('trained_date', '?')}"
+            + (f" on {', '.join(trained_where)}" if trained_where else "")
         )
         log.info(
             f"Mag        : {meta.get('magnification', '?')} | "

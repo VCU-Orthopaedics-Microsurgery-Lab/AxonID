@@ -26,6 +26,7 @@ from pathlib import Path
 
 # ── Local ─────────────────────────────────────────────────────────────────────
 from utils.config import load_config
+from utils.filesystem import is_stray_file
 
 
 @dataclass
@@ -72,14 +73,14 @@ def _has_images(d: Path, source_dir: Path | None = None) -> bool:
     if not d.exists():
         return False
     imgs = [f for f in d.iterdir()
-            if f.is_file() and f.suffix.lower() in ('.tif', '.tiff', '.png')]
+            if f.is_file() and f.suffix.lower() in ('.tif', '.tiff', '.png') and not is_stray_file(f)]
     if not imgs:
         return False
     if source_dir is not None and source_dir.exists():
         config          = load_config()
         seg_suffix      = config.get("segmented_suffix", "_segmented")
         source_stems    = {f.stem for f in source_dir.iterdir()
-                           if f.is_file() and f.suffix.lower() in ('.tif', '.tiff')}
+                           if f.is_file() and f.suffix.lower() in ('.tif', '.tiff') and not is_stray_file(f)}
         segmented_stems = {_strip_suffix(f.stem, seg_suffix) for f in imgs}
         return source_stems.issubset(segmented_stems)
     return True

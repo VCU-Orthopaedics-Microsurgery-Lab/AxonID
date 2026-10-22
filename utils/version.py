@@ -92,12 +92,6 @@ def get_env_info() -> dict:
         info["scikit_image"] = None
 
     try:
-        import sklearn
-        info["scikit_learn"] = sklearn.__version__
-    except ImportError:
-        info["scikit_learn"] = None
-
-    try:
         import timm
         info["timm"] = timm.__version__
     except ImportError:
@@ -116,9 +110,9 @@ def get_env_info() -> dict:
         info["pandas"] = None
 
     try:
-        import patchify
-        info["patchify"] = getattr(patchify, '__version__', 'unknown')
-    except ImportError:
+        from importlib.metadata import version as _dist_version
+        info["patchify"] = _dist_version("patchify")
+    except Exception:
         info["patchify"] = None
 
     return info

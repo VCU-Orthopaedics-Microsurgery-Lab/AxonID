@@ -65,7 +65,7 @@ from train.dataset.augment import augment_dataset_np
 from train.dataset.data_loader import load_all_patches
 from train.dataset.preprocess import batch_process
 from train.dataset.split import build_image_manifest, split_images, split_summary
-from utils.filesystem import count_patches
+from utils.filesystem import count_patches, is_stray_file
 from utils.logger import AxonIDLogger
 from utils.mask_contract import off_contract_count
 from utils.metrics import compute_all_metrics, compute_epoch_metrics
@@ -164,8 +164,8 @@ def prepare_dataset(images_dir: str, log: AxonIDLogger) -> dict:
         raise FileNotFoundError(f"Masks folder not found: {masks_dir}")
 
     exts  = ("*.tif", "*.tiff", "*.png")
-    imgs  = sorted(p for e in exts for p in images_dir.glob(e))
-    masks = sorted(p for e in exts for p in masks_dir.glob(e))
+    imgs  = sorted(p for e in exts for p in images_dir.glob(e) if not is_stray_file(p))
+    masks = sorted(p for e in exts for p in masks_dir.glob(e) if not is_stray_file(p))
 
     log.rule("SOURCE MASK VALUES")
     n_snapped_masks = 0

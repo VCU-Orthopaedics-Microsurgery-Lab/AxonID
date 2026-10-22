@@ -45,6 +45,9 @@ from pathlib import Path
 # ── Third-party ───────────────────────────────────────────────────────────────
 import numpy as np
 
+# ── Project ───────────────────────────────────────────────────────────────────
+from utils.filesystem import is_stray_file
+
 # Filename prefixes that identify phenotype. Stratification uses them; images
 # without either prefix can still be trained on (random image-level split).
 CTRL_PREFIX  = "ctrl_"
@@ -69,7 +72,7 @@ def build_image_manifest(images_dir: str | Path) -> list[dict]:
 
     # Sorted order matters: the split below indexes into this list, so a
     # different order would give a different split for the same seed.
-    files = sorted(p for p in images_dir.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
+    files = sorted(p for p in images_dir.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS and not is_stray_file(p))
     if not files:
         raise FileNotFoundError(f"No .tif/.tiff/.png images found in {images_dir}")
 

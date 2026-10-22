@@ -255,10 +255,17 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
             log.warn(f"  {animal}/{nerve} — {seg_dir.name}")
 
     if not to_process:
-        log.success(
-            "All segmented datasets already have complete morphometrics. "
-            "Nothing to do."
-        )
+        if to_skip:
+            log.success(
+                "All segmented datasets already have complete morphometrics. "
+                "Nothing to do."
+            )
+        else:
+            log.warn(
+                "No segmented datasets found, so nothing was processed. Each nerve "
+                "needs a Segmented folder containing <image name>_segmented.tif files "
+                "(README, Folder layout and file names)."
+            )
 
         log.finalize(summary={
             "Folder": str(input_dir),

@@ -17,6 +17,18 @@ from pathlib import Path
 import re
 
 
+def is_stray_file(path: str | Path) -> bool:
+    """
+    True for hidden or system files that are not user images: names starting
+    with "." (macOS "._name.tif" copies) and Windows hidden/system files
+    (for example Thumbs.tif).
+    """
+    p = Path(path)
+    if p.name.startswith("."):
+        return True
+    return bool(getattr(p.stat(), "st_file_attributes", 0) & 0x6)  # hidden | system
+
+
 def natural_sort_key(path: str | Path) -> list[int | str]:
     """
     Return a natural-sort key for a filename containing numbers.
@@ -56,7 +68,7 @@ def list_files(
     return sorted(
         (
             p for p in directory.iterdir()
-            if p.is_file() and p.suffix.lower() in extensions
+            if p.is_file() and p.suffix.lower() in extensions and not is_stray_file(p)
         ),
         key=natural_sort_key,
     )
