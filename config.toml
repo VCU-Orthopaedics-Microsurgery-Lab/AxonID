@@ -1,0 +1,80 @@
+# AxonID settings you may change.
+#
+# Model, training, watershed and quality-filter settings are fixed by the AxonID
+# recipe (utils/recipe.py); AxonID refuses to start if they are added here.
+#
+# How to edit: change only the value after "=". Text needs double quotes ("CSA");
+# numbers, true and false do not. Lines starting with # are notes and are ignored.
+#
+# FIRST: replace the pixel_size_um values with your own microscope calibration
+# before measuring anything (README, Calibration).
+
+
+# ── PIXEL CALIBRATION (µm per pixel) ── REQUIRED: replace with your own values ──
+#
+# One table per magnification; inside it, one line per ORIGINAL image width in
+# pixels (the width of the file your camera saved, before AxonID resizes anything):
+#     <width> = <µm per pixel>
+#
+# The values below are the AxonID lab's (Nikon Eclipse E600, Nikon Fi3 camera).
+# They are examples: measure your own (README, Calibration).
+#   40X: the images AxonID segments and measures.
+#   4X:  whole-nerve images, used only for the CSA that scales axon counts to the
+#        whole nerve.
+# A wrong value does not cause an error: every µm, µm² and density result is
+# silently wrong. A missing value gives pixel units with a warning.
+
+[pixel_size_um.4X]
+1440 = 2.174
+2880 = 1.087
+
+[pixel_size_um.40X]
+1440 = 0.217
+
+
+# ── REPORTING ── changes how results are summarized, not which axons are counted ──
+
+[reporting]
+# "equiv_diam" or "mean_axes": the g-ratio used in nerve and study summaries.
+# Both (and their mean) are always stored per axon in the Myelin+G-ratio sheet.
+primary_gratio_method = "equiv_diam"
+
+[morphometrics_bins]
+# Fiber-diameter bin edges in µm for the _binned.xlsx sheets. 999 means "and above".
+granular_um = [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 999]
+mid_um      = [0, 2, 4, 6, 8, 10, 12, 14, 16, 999]
+coarse_um   = [0, 5, 10, 15, 20, 25, 30, 999]
+
+
+# ── REVIEW OUTPUT AND LOGS ── no effect on results ──
+
+[qc]
+# Review images: segmentation overlays and watershed QC figures.
+segment   = true
+watershed = true
+
+[logging]
+# Write a step-by-step log file into the folder you run on.
+# Training always writes a log (logs/).
+segment       = false
+morphometrics = false
+batch_axon    = false
+
+[timing]
+# Log how long each segmentation step took.
+enabled = false
+
+
+# ── FOLDER AND FILE NAMES ── must match your study layout (README, Folder layout) ──
+
+[folders]
+# Image folders are named <magnification><suffix>, e.g. 40X_TIFF (upper or lower
+# case: 40x_tiff also matches). A nerve whose image folder matches none of these
+# is skipped without an error.
+tiff_suffixes        = ["_TIFF"]
+segmented_folder     = "Segmented"
+segmented_suffix     = "_segmented"
+morphometrics_folder = "Morphometrics"
+morphometrics_suffix = "_morphometrics"
+csa_folder           = "CSA"
+csa_suffix_geojson   = "_CSA.geojson"

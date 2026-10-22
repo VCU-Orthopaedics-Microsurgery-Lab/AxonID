@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Model weights: released models are downloaded from the GitHub release
+# (python -m utils.fetch_models); models you train stay on your machine.
+*.pt
+*.safetensors
+*.part
+
+# Image data never belongs in the repository
+*.tif
+*.tiff
+*.png
+*.ome.tif
+
+# Logs written by training and (optionally) the other stages
+logs/
+*_log_*.txt
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Test cache
+.pytest_cache/
