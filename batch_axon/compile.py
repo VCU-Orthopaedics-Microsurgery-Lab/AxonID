@@ -90,8 +90,9 @@ def compile_from_animal_workbooks(study: dict, study_dir, mag, config, log: Axon
             continue
         xlsx_path = get_animal_xlsx_path(animal_path, animal_name)
         if not xlsx_path.exists():
-            log.warn(f"No existing workbook for {animal_name} ({xlsx_path.name}) — "
-                     f"run a full pass first. Skipping.")
+            log.warn(f"No existing workbook for {animal_name} ({xlsx_path.name}). "
+                     f"Run 'python -m batch_axon --skip-segment --skip-morphometrics' "
+                     f"once to create it, then --compile-only works. Skipping.")
             result.animals_skipped += 1
             continue
         if copy_animal_sheet_static(xlsx_path, combined_workbook, animal_name, log):

@@ -18,7 +18,7 @@ Outputs
     <nerve>/Segmented/<image>_segmented.tif: uint8 BGW (0 background,
     128 myelin, 255 axon) at the downsampled resolution, with JSON provenance
     in the TIFF description (model, version, original size, resize scale).
-    <nerve>/QC/<nerve>_qc_sheet_M<model>.png when QC is on.
+    <nerve>/QC/<nerve>_segmentation_qc.png when QC is on.
 
 Processing
     downsample to fit 1440x1024 (aspect kept; never upscaled)
@@ -454,8 +454,7 @@ def save_qc_sheet(
 ):
     """
     Generate a QC sheet showing original / segmented / overlay for each image.
-    Saved as {nerve_name}_qc_sheet_M{model_name}.png in a QC/ subfolder
-    of the nerve directory.
+    Saved as {nerve_name}_segmentation_qc.png in a QC/ subfolder
 
     Layout: one row per image, three columns — original | segmented | overlay
     Overlay: axon=pink, myelin=purple, background=original grayscale image
@@ -556,7 +555,7 @@ def save_qc_sheet(
 
     plt.tight_layout()
 
-    out_path = qc_dir / f"{nerve_name}_qc_sheet_M{model_name}.png"
+    out_path = qc_dir / f"{nerve_name}_segmentation_qc.png"
     fig.savefig(str(out_path), dpi=150, bbox_inches='tight')
     plt.close(fig)
 

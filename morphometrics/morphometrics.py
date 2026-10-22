@@ -530,7 +530,7 @@ def save_watershed_qc(
     """
     Generate a watershed QC image for all segmented images in a nerve.
 
-    Saved as {nerve_name}_watershed_qc{suffix}.png in the configured
+    Saved as {nerve_name}_morphometrics_qc{suffix}.png in the configured
     QC/ folder.
 
     Layout: one row per image.
@@ -700,12 +700,12 @@ def save_watershed_qc(
     )
     plt.tight_layout()
 
-    out_path = qc_dir / f"{nerve_name}_watershed_qc{suffix}.png"
+    out_path = qc_dir / f"{nerve_name}_morphometrics_qc{suffix}.png"
     fig.savefig(str(out_path), dpi=150, bbox_inches='tight')
     plt.close(fig)
 
     if log:
-        log.success(f"Watershed QC saved → QC/{nerve_name}_watershed_qc{suffix}.png")
+        log.success(f"Morphometrics QC saved → QC/{nerve_name}_morphometrics_qc{suffix}.png")
 
 
 # ─── Save output ──────────────────────────────────────────────────────────────

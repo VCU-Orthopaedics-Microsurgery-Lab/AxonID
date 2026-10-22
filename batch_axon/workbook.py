@@ -37,9 +37,17 @@ import openpyxl
 # ── Local ─────────────────────────────────────────────────────────────────────
 from utils.logger import AxonIDLogger
 
+NUM_FORMATS = {
+    'csa':    '#,##0.00',
+    'count':  '#,##0',
+    'gratio': '0.00',
+    'diam':   '0.00',
+    'est':    '#,##0',
+    'dens':   '0.0000',
+}
 
 def add_formats(workbook):
-    return {
+    fmts = {
         'header':       workbook.add_format({'border': 2, 'bold': True, 'bg_color': '#D9E1F2'}),
         'bold':         workbook.add_format({'bold': True}),
         'grey':         workbook.add_format({'bg_color': '#8a8a8a', 'pattern': 1}),
@@ -49,6 +57,12 @@ def add_formats(workbook):
         'missing':      workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'}),  # Excel "Bad" style — no measurement at all
         'suspect_zero': workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'}),  # Excel "Neutral" style — real 0, likely a segmentation error, worth a look
     }
+    # Display precision per column (stored values keep full precision).
+    for key, nf in NUM_FORMATS.items():
+        fmts[key]            = workbook.add_format({'num_format': nf})
+        fmts[f'{key}_bold']  = workbook.add_format({'bold': True, 'num_format': nf})
+        fmts[f'{key}_total'] = workbook.add_format({'bold': True, 'top': 2, 'num_format': nf})
+    return fmts
 
 def _is_num(v) -> bool:
     """True for a value Excel's ISNUMBER() would accept (not text, None, NaN or bool)."""
@@ -122,7 +136,7 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
     fourx_csa = aggregate.get('fourx_csa_um2')
     worksheet.write(row, 0, label, formats['bold'])
     worksheet.write(row, 1, f"{animal_name}_4X_{nerve_name}")
-    worksheet.write(row, 2, fourx_csa if fourx_csa is not None else MISSING, formats['bold'])
+    worksheet.write(row, 2, fourx_csa if fourx_csa is not None else MISSING, formats['csa_bold'])
     for col in range(3, 8):
         worksheet.write(row, col, '', formats['grey'])
     fourx_csa_row = row  # 0-indexed row of this label row, col C holds fourx_csa
@@ -141,19 +155,19 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
         # will use the separate whole-nerve 4X CSA.
         csa = entry.get('csa_um2')
         csa = csa if _is_num(csa) else MISSING
-        worksheet.write(row, 2, csa)
+        worksheet.write(row, 2, csa, formats['csa'])
 
         total_axons = entry.get('total_axons')
         total_axons = total_axons if _is_num(total_axons) else MISSING
-        worksheet.write(row, 3, total_axons)
+        worksheet.write(row, 3, total_axons, formats['count'])
 
         gratio = entry.get('gratio')
         gratio = round(gratio, 4) if _is_num(gratio) else MISSING
-        worksheet.write(row, 4, gratio)
+        worksheet.write(row, 4, gratio, formats['gratio'])
 
         diam = entry.get('axon_diam_um')
         diam = round(diam, 3) if _is_num(diam) else MISSING
-        worksheet.write(row, 5, diam)
+        worksheet.write(row, 5, diam, formats['diam'])
 
         # The values written above, for the Totals row's stored values.
         col_csa.append(csa); col_axons.append(total_axons)
@@ -179,7 +193,7 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
             row, 7,
             f'=IF(OR(NOT(ISNUMBER(C{xl_row})),NOT(ISNUMBER(D{xl_row}))),"{MISSING}",'
             f'IF(C{xl_row}=0,0,D{xl_row}/C{xl_row}))',
-            value=dens
+            formats['dens'], value=dens
         )
         row += 1
 
@@ -231,7 +245,7 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
         row, 2,
         f'=IF(COUNT(C{xl_first}:C{xl_last})={n},'
         f'SUM(C{xl_first}:C{xl_last}),"{MISSING}")',
-        formats['total'],
+        formats['csa_total'],
         value=total_csa
     )
 
@@ -253,7 +267,8 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
     # unweighted AVERAGE would let an image with 20 axons count as much as
     # one with 900. Images without a numeric value drop out of both the
     # numerator and the denominator.
-    for col, letter, values in ((4, 'E', col_gratio), (5, 'F', col_diam)):
+    for col, letter, values, fmt in ((4, 'E', col_gratio, 'gratio_total'),
+                                     (5, 'F', col_diam,   'diam_total')):
         rng_d = f'D{xl_first}:D{xl_last}'
         rng_v = f'{letter}{xl_first}:{letter}{xl_last}'
         mean = _weighted_mean(col_axons, values)
@@ -262,7 +277,7 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
             f'=IF(SUMPRODUCT({rng_d},--ISNUMBER({rng_v}))>0,'
             f'SUMPRODUCT({rng_d},{rng_v})/SUMPRODUCT({rng_d},--ISNUMBER({rng_v})),'
             f'"{MISSING}")',
-            formats['total'],
+            formats[fmt],
             value=mean if mean is not None else MISSING
         )
 
@@ -285,7 +300,7 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
         f'"{MISSING}",'
         f'IFERROR(D{xl_totals_row}/C{xl_totals_row}*C{xl_fourx_row},'
         f'"{MISSING}"))',
-        formats['total'],
+        formats['est_total'],
         value=est
     )
 
@@ -300,7 +315,7 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
         row, 7,
         f'=IF(NOT(ISNUMBER(C{xl_totals_row})),"{MISSING}",'
         f'IFERROR(D{xl_totals_row}/C{xl_totals_row},"{MISSING}"))',
-        formats['total'],
+        formats['dens_total'],
         value=density_val
     )
 
@@ -400,13 +415,16 @@ def copy_animal_sheet_static(src_xlsx: Path, dst_workbook, animal_name: str, log
             fill_rgb = None
             if cell.fill and cell.fill.fgColor and cell.fill.fgColor.rgb and cell.fill.fgColor.rgb != '00000000':
                 fill_rgb = cell.fill.fgColor.rgb[-6:]
-            key = (fill_rgb, bool(cell.font and cell.font.bold))
+            nf = cell.number_format if cell.number_format != 'General' else None
+            key = (fill_rgb, bool(cell.font and cell.font.bold), nf)
             if key not in fmt_cache:
                 props = {}
                 if fill_rgb:
                     props['bg_color'] = f'#{fill_rgb}'
                 if key[1]:
                     props['bold'] = True
+                if key[2]:
+                    props['num_format'] = key[2]
                 fmt_cache[key] = dst_workbook.add_format(props) if props else None
             dst_ws.write(cell.row - 1, cell.column - 1, cell.value, fmt_cache[key])
 

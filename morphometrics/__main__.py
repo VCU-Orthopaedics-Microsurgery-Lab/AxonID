@@ -17,7 +17,7 @@ Inputs
 Outputs
     Morphometrics*/{image}_morphometrics.xlsx   per image
     Morphometrics*/{nerve}_binned.xlsx          per nerve
-    QC/{nerve}_watershed_qc*.png                when config.toml qc.watershed is true
+    QC/{nerve}_morphometrics_qc*.png            when config.toml qc.watershed is true
 
 Behaviour
     A dataset is skipped when every segmented TIFF already has its
