@@ -2,12 +2,15 @@
 batch_axon/__main__.py: whole-study run: segmentation, morphometrics, then Excel summaries.
 
 Usage
-    python -m batch_axon                       segment + morphometrics + compile
-    python -m batch_axon --skip-segment        morphometrics + compile
-    python -m batch_axon --skip-morphometrics  segment + compile
-    python -m batch_axon --compile-only        rebuild the study workbook from the
-                                               existing animal workbooks (keeps manual edits)
-    The study folder is entered at the prompt; segmentation prompts for the model.
+    python -m batch_axon                                segment + morphometrics + compile
+    python -m batch_axon --skip-segment                 morphometrics + compile
+    python -m batch_axon --skip-morphometrics           segment + compile
+    python -m batch_axon --compile-only                 rebuild the study workbook from the
+                                                        existing animal workbooks (keeps manual edits)
+    python -m batch_axon --input STUDY --model MODEL    no prompts (cluster / scripted use)
+        The study folder is entered at the prompt unless --input is given;
+        segmentation prompts for the model unless --model is given (a menu
+        number, or a model file name, file stem or label).
 
 Inputs
     A study folder in the AxonID layout: Study/Animal/Nerve/40X_TIFF, plus
@@ -89,6 +92,11 @@ def main():
                          help="Skip the morphometrics stage (assume it's already been run) and "
                               "go straight to compilation. Segmentation still runs unless "
                               "--skip-segment is also passed.")
+    parser.add_argument("--input", metavar="STUDY",
+                         help="study folder (skips the folder prompt)")
+    parser.add_argument("--model", metavar="MODEL",
+                         help="menu number, or model file name, file stem or label "
+                              "(skips the model menu; used by the segmentation stage)")
     args = parser.parse_args()
     
     if args.compile_only and (args.skip_segment or args.skip_morphometrics):
@@ -122,9 +130,14 @@ def main():
     ))
 
     while True:
-        input_dir = input("\nInput the path to the study folder: ").strip().strip('"')
+        if args.input is not None:
+            input_dir = args.input.strip().strip('"')
+        else:
+            input_dir = input("\nInput the path to the study folder: ").strip().strip('"')
         if not os.path.isdir(input_dir):
             console.print(f"[red]✗  Folder not found: {input_dir}[/red]")
+            if args.input is not None:
+                sys.exit(1)
             continue
 
         try:
@@ -140,6 +153,8 @@ def main():
 
         except ValueError as e:
             console.print(f"[red]✗  {e}[/red]")
+            if args.input is not None:
+                sys.exit(1)
             continue
 
     study_path  = Path(study_dir)
@@ -180,7 +195,7 @@ def main():
     if not args.skip_segment:
         log.rule("SEGMENTATION")
         try:
-            seg_result = run_segment(str(study_dir), quiet_banner=True)
+            seg_result = run_segment(str(study_dir), quiet_banner=True, model=args.model)
             if not seg_result.success:
                 log.warn(
                     "Segmentation did not complete for every nerve — "

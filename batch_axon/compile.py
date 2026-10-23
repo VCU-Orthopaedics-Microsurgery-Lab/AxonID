@@ -176,10 +176,16 @@ def compile_study(study: dict, study_dir, mag, config, log: AxonIDLogger) -> Com
 
                 if not image_rows:
                     nerve_elapsed = time.time() - nerve_start
-                    log.warn(
-                        f"  → No data returned for {nerve_name} "
-                        f"({nerve_elapsed:.1f}s)"
-                    )
+                    if aggregate and aggregate.get('excluded_images'):
+                        log.warn(
+                            f"  → Every image of {nerve_name} is excluded (EXCLUDE tag): "
+                            f"nothing to compile ({nerve_elapsed:.1f}s)"
+                        )
+                    else:
+                        log.warn(
+                            f"  → No data returned for {nerve_name} "
+                            f"({nerve_elapsed:.1f}s)"
+                        )
                     result.nerves_failed += 1
                     continue
 
@@ -229,9 +235,9 @@ def compile_study(study: dict, study_dir, mag, config, log: AxonIDLogger) -> Com
                 result.nerves_failed += 1
 
         animal_worksheet.set_column(0, 1, 28)
-        animal_worksheet.set_column(2, 7, 18)
+        animal_worksheet.set_column(2, 9, 18)
         combined_worksheet.set_column(0, 1, 28)
-        combined_worksheet.set_column(2, 7, 18)
+        combined_worksheet.set_column(2, 9, 18)
         animal_workbook.close()
 
         if any_nerve_written:

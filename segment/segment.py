@@ -340,7 +340,7 @@ def segment_image(img_path, model, patch_size=RECIPE.patch_size, log=None):
 
     # Downsample to the working resolution. This is the only step that changes
     # um per pixel; padding and the final crop do not.
-    img, scale, original_size = resize_img_with_scale(img_path, is_mask=False)
+    img, scale, original_size = resize_img_with_scale(img_path, is_mask=False, log=log)
     orig_h, orig_w = img.shape[:2]
 
     # ── Pad to complete the patch grid ────────────────────────────────────

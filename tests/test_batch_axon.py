@@ -98,3 +98,22 @@ def test_totals_stored_values_follow_formulas_when_csa_missing(tmp_path):
     assert [v.cell(4, c).value for c in (3, 4, 5, 6, 8)] == ["missing", 0, "missing", "missing", "missing"]
     assert [v.cell(5, c).value for c in range(3, 9)] == ["missing", 50, 0.62, 3.0, "missing", "missing"]
     assert v["H3"].value == pytest.approx(0.05)
+
+
+def test_outside_tracing_columns(tmp_path):
+    # Images 1 and 2 had a tracing applied (3 and 1 axons outside it); image 3 did not.
+    rows = [{"name": "a", "csa_um2": 1000.0, "total_axons": 97, "gratio": 0.6, "axon_diam_um": 2.0, "axons_outside_tracing": 3},
+            {"name": "b", "csa_um2": 1000.0, "total_axons": 99, "gratio": 0.6, "axon_diam_um": 2.0, "axons_outside_tracing": 1},
+            {"name": "c", "csa_um2": 1000.0, "total_axons": 50, "gratio": 0.6, "axon_diam_um": 2.0}]
+    f, v = _block(tmp_path, rows)
+    assert [v.cell(2 + 1, c).value for c in (9, 10)] == [3, pytest.approx(0.03)]
+    assert [v.cell(5, c).value for c in (9, 10)] == ["n/a", "n/a"]          # image c: no tracing applied
+    assert [v.cell(6, c).value for c in (9, 10)] == [4, pytest.approx(4 / (4 + 97 + 99))]   # c is left out of the share
+    assert f["I6"].value == '=IF(COUNT(I3:I5)=0,"n/a",SUM(I3:I5))'
+    assert [c.value for c in f[1]][8:10] == ["Axons Outside Tracing", "Outside Tracing (%)"]
+
+
+def test_outside_tracing_columns_without_any_tracing(tmp_path):
+    f, v = _block(tmp_path, ROWS)
+    assert [v.cell(3, c).value for c in (9, 10)] == ["n/a", "n/a"]
+    assert [v.cell(5, c).value for c in (9, 10)] == ["n/a", "n/a"]

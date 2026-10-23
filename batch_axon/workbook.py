@@ -19,6 +19,11 @@ Outputs
     Cells in an xlsxwriter worksheet. Derived cells (density, totals,
     estimated axon count) are live Excel formulas; "missing" is red, a
     measured 0 is yellow (conditional formatting, so it updates live).
+    Images tagged EXCLUDE in QuPath are listed under the Totals row with their
+    reason and are in none of the numbers.
+    The last two columns report the axons morphometrics excluded because they
+    lay outside the CSA tracing, as a count and as a share of all accepted
+    axons; they are "n/a" for an image without an applied tracing.
 
 Depends on
     xlsxwriter (writing), openpyxl (reading for --compile-only)
@@ -44,7 +49,11 @@ NUM_FORMATS = {
     'diam':   '0.00',
     'est':    '#,##0',
     'dens':   '0.0000',
+    'pct':    '0.0%',
 }
+
+NA = "n/a"      # no tracing was applied to this image: nothing was excluded
+
 
 def add_formats(workbook):
     fmts = {
@@ -79,7 +88,8 @@ def _weighted_mean(weights: list, values: list):
 HEADERS = [
     'Slide / Nerve', 'Sample', 'CSA (µm²)',
     'Total Axons', 'G-ratio', 'Axon Diameter (µm)',
-    'Est. Full Axon Count', 'Axons / µm²'
+    'Est. Full Axon Count', 'Axons / µm²',
+    'Axons Outside Tracing', 'Outside Tracing (%)'
 ]
 
 
@@ -137,14 +147,14 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
     worksheet.write(row, 0, label, formats['bold'])
     worksheet.write(row, 1, f"{animal_name}_4X_{nerve_name}")
     worksheet.write(row, 2, fourx_csa if fourx_csa is not None else MISSING, formats['csa_bold'])
-    for col in range(3, 8):
+    for col in range(3, 10):
         worksheet.write(row, col, '', formats['grey'])
     fourx_csa_row = row  # 0-indexed row of this label row, col C holds fourx_csa
     row += 1
 
     # Per-image rows
     first_data_row = row
-    col_csa, col_axons, col_gratio, col_diam = [], [], [], []
+    col_csa, col_axons, col_gratio, col_diam, col_outside = [], [], [], [], []
     for entry in image_rows:
         worksheet.write(row, 1, entry.get('name', ''))
 
@@ -195,6 +205,25 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
             f'IF(C{xl_row}=0,0,D{xl_row}/C{xl_row}))',
             formats['dens'], value=dens
         )
+        
+        # Axons outside the CSA tracing: excluded by morphometrics from every
+        # number in this row (the count above is already inside the tracing).
+        # The share is outside / (outside + inside). "n/a" when no tracing
+        # was applied to the image.
+        outside = entry.get('axons_outside_tracing')
+        outside = outside if _is_num(outside) else NA
+        worksheet.write(row, 8, outside, formats['count'])
+        if _is_num(outside) and _is_num(total_axons):
+            pct = outside / (outside + total_axons) if outside + total_axons > 0 else 0
+        else:
+            pct = NA
+        worksheet.write_formula(
+            row, 9,
+            f'=IF(AND(ISNUMBER(I{xl_row}),ISNUMBER(D{xl_row})),'
+            f'IF(I{xl_row}+D{xl_row}=0,0,I{xl_row}/(I{xl_row}+D{xl_row})),"{NA}")',
+            formats['pct'], value=pct
+        )
+        col_outside.append(outside)
         row += 1
 
     last_data_row = row - 1
@@ -216,6 +245,10 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
             })
             worksheet.conditional_format(first_data_row, col, last_data_row, col, {
                 'type': 'cell', 'criteria': '==', 'value': 0, 'format': formats['suspect_zero']
+            })
+        for col in (8, 9):      # axons outside the tracing: anything above 0 is worth a look
+            worksheet.conditional_format(first_data_row, col, last_data_row, col, {
+                'type': 'cell', 'criteria': '>', 'value': 0, 'format': formats['suspect_zero']
             })
 
     # Totals row — derived values remain live Excel formulas.
@@ -318,6 +351,36 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
         formats['dens_total'],
         value=density_val
     )
+    
+    # Axons outside the tracing: total, and the share among the images that
+    # had a tracing applied (images without one hold "n/a" and are left out of
+    # both the numerator and the denominator).
+    rng_i = f'I{xl_first}:I{xl_last}'
+    rng_d = f'D{xl_first}:D{xl_last}'
+    outside_nums = [v for v in col_outside if _is_num(v)]
+    total_outside = sum(outside_nums) if outside_nums else NA
+    worksheet.write_formula(
+        row, 8,
+        f'=IF(COUNT({rng_i})=0,"{NA}",SUM({rng_i}))',
+        formats['count_total'], value=total_outside
+    )
+    if outside_nums:
+        inside_in_traced = sum(a for a, o in zip(col_axons, col_outside) if _is_num(o) and _is_num(a))
+        denom = total_outside + inside_in_traced
+        share = total_outside / denom if denom > 0 else 0
+    else:
+        share = NA
+    worksheet.write_formula(
+        row, 9,
+        f'=IF(COUNT({rng_i})=0,"{NA}",'
+        f'IF(SUM({rng_i})+SUMPRODUCT({rng_d},--ISNUMBER({rng_i}))=0,0,'
+        f'SUM({rng_i})/(SUM({rng_i})+SUMPRODUCT({rng_d},--ISNUMBER({rng_i})))))',
+        formats['pct_total'], value=share
+    )
+    for col in (8, 9):
+        worksheet.conditional_format(row, col, row, col, {
+            'type': 'cell', 'criteria': '>', 'value': 0, 'format': formats['suspect_zero']
+        })
 
     # fourx_csa cell: "missing" text -> red; a real 0 -> yellow
     worksheet.conditional_format(fourx_csa_row, 2, fourx_csa_row, 2, {
@@ -340,6 +403,17 @@ def write_nerve_block(worksheet, row, nerve_name, animal_name, image_rows, aggre
             'value': 0,
             'format': formats['suspect_zero']
         })
+
+    # Images tagged EXCLUDE: in no number above; listed here with their reason.
+    excluded = aggregate.get('excluded_images') or []
+    if excluded:
+        row += 1
+        worksheet.write(row, 1, f"Excluded images (n={len(excluded)}), left out of every number above", formats['italic'])
+        for entry in excluded:
+            row += 1
+            worksheet.write(row, 1, entry.get('name', ''))
+            worksheet.write(row, 2, f"EXCLUDED: {entry.get('reason', '')}", formats['italic'])
+
 
     row += 4  # Gap between nerves
     return row
@@ -429,5 +503,5 @@ def copy_animal_sheet_static(src_xlsx: Path, dst_workbook, animal_name: str, log
             dst_ws.write(cell.row - 1, cell.column - 1, cell.value, fmt_cache[key])
 
     dst_ws.set_column(0, 1, 28)
-    dst_ws.set_column(2, 7, 18)
+    dst_ws.set_column(2, 9, 18)
     return True

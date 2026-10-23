@@ -53,6 +53,27 @@ from utils.recipe import MORPHOMETRICS, MORPHOMETRICS_ID
 from utils.version import __version__
 
 
+def image_exclusion_reason(workbook_path) -> str | None:
+    """
+    Why an image was excluded, from its workbook's Summary sheet ("Image
+    excluded: yes: <reason>"), or None when it was not (or the workbook has
+    no such row, as in older versions).
+
+    Args:
+        workbook_path: {image}_morphometrics.xlsx
+    """
+    try:
+        s = pd.read_excel(str(workbook_path), sheet_name="Summary", header=None, usecols=[0, 1])
+    except Exception:
+        return None
+    for key, value in zip(s[0], s[1]):
+        if pd.isna(key):                    # blank row ends the key/value block
+            break
+        if str(key) == "Image excluded" and str(value).startswith("yes"):
+            return str(value).partition(":")[2].strip() or "no reason recorded"
+    return None
+
+
 def bin_nerve_diameters(
     morph_dir: Path,
     nerve_name: str,
@@ -89,6 +110,8 @@ def bin_nerve_diameters(
     morph_suffix = config.get("morphometrics_suffix", "_morphometrics")
     dfs          = {}
     for f in sorted(morph_dir.glob(f"*{morph_suffix}.xlsx")):
+        if image_exclusion_reason(f):       # image tagged EXCLUDE: in no distribution
+            continue
         try:
             df = pd.read_excel(str(f), sheet_name='Axon')
             if df.empty:

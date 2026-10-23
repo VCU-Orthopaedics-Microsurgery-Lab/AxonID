@@ -7,12 +7,17 @@ Purpose
     nerve-level diameter distribution for each.
 
 Usage
-    python -m morphometrics            prompts for the folder
+    python -m morphometrics                               prompts for the folder
+    python -m morphometrics --input FOLDER                no prompt (cluster / scripted use)
     from morphometrics.__main__ import run; run(folder)   (used by batch_axon)
 
 Inputs
     Study / animal / nerve folders in the AxonID layout (see README), with
-    segmented TIFFs in Segmented*/ folders.
+    segmented TIFFs in Segmented*/ folders. Optional: CSA/{image}_CSA.geojson
+    (QuPath tracing). When an image has one, only the axons inside it are
+    measured; the others are counted and listed on an "Outside tracing"
+    sheet (morphometrics/tracing.py). A feature classified EXCLUDE (reason in
+    its name) excludes the whole image the same way: nothing in it is counted.
 
 Outputs
     Morphometrics*/{image}_morphometrics.xlsx   per image
@@ -41,6 +46,7 @@ from __future__ import annotations
 import os
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 os.environ['OPENCV_LOG_LEVEL'] = 'ERROR'
+import argparse
 import sys
 import time
 from datetime import datetime
@@ -62,6 +68,13 @@ from morphometrics.morphometrics import (
     get_morphometrics,
     save_morphometrics,
     save_watershed_qc,
+)
+from morphometrics.tracing import (
+    exclude_image,
+    get_geojson_exclusion,
+    save_outside_tracing,
+    split_by_tracing,
+    tracing_path,
 )
 from utils.calibration import read_tiff_provenance, resolve_pixel_size
 from utils.config import (
@@ -357,6 +370,12 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
         # Model names recovered from segmentation TIFF provenance.
         nerve_models = set()
         n_legacy_calibration = 0
+        n_all_axons = 0          # accepted axons in images that have a CSA tracing
+        n_outside_axons = 0      # of those, outside the tracing
+        n_without_tracing = 0    # 40X images with no usable tracing
+        excluded_images = []     # (image, reason) for images tagged EXCLUDE in their GeoJSON
+        outside_frames = []      # axons outside the tracing, one frame per image
+        tracing_overlays = {}    # segmented image path -> (region, outside axons), for QC
 
         # ── Per-image morphometrics ───────────────────────────────────────────
         for img_path in seg_images:
@@ -434,6 +453,35 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
                         provenance["model_name"]
                     )
 
+                # CSA tracing (40X): measure only the axons inside it. The
+                # others are counted and listed on the "Outside tracing"
+                # sheet. The watershed QC above keeps every accepted axon.
+                outside_df = None
+                tracing_info = None
+                if nerve_mag == "40X":
+                    geojson_file = tracing_path(nerve_path, stem, config)
+                    if geojson_file.is_file():
+                        exclusion = get_geojson_exclusion(str(geojson_file), log)
+                        if exclusion:
+                            df, raw_df, outside_df, tracing_info = exclude_image(
+                                df, raw_df, calibration.resize_scale, exclusion
+                            )
+                            excluded_images.append((stem, exclusion))
+                        else:
+                            df, raw_df, outside_df, tracing_info = split_by_tracing(
+                                df, raw_df, geojson_file, calibration.resize_scale, log
+                            )
+                    if tracing_info is None:
+                        n_without_tracing += 1
+                    elif tracing_info.get("excluded"):
+                        outside_frames.append(outside_df)
+                        tracing_overlays[img_path] = (None, outside_df, tracing_info["excluded"])
+                    else:
+                        n_all_axons += tracing_info["n_all"]
+                        n_outside_axons += tracing_info["n_outside"]
+                        outside_frames.append(outside_df)
+                        tracing_overlays[img_path] = (tracing_info["region_px"], outside_df)
+
                 out = save_morphometrics(
                     df,
                     raw_df,
@@ -441,10 +489,22 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
                     stem,
                     provenance=provenance,
                     calibration=calibration,
+                    tracing=tracing_info,
+                    outside_df=outside_df,
                 )
 
+                if tracing_info and tracing_info.get("excluded"):
+                    outside_note = (
+                        f" (image excluded: {tracing_info['excluded']}; "
+                        f"{tracing_info['n_all']} accepted axons not counted)"
+                    )
+                else:
+                    outside_note = (
+                        f" (+{tracing_info['n_outside']} outside the tracing, excluded)"
+                        if tracing_info and tracing_info["n_outside"] else ""
+                    )
                 log.success(
-                    f"  → {len(df)} axons → "
+                    f"  → {len(df)} axons{outside_note} → "
                     f"{Path(out).name}"
                 )
 
@@ -469,6 +529,27 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
                 total_failed += 1
                 morph_extraction_elapsed += time.time() - img_start
 
+        if n_all_axons:
+            log.info(
+                f"CSA tracing: {n_outside_axons} of {n_all_axons} accepted axons "
+                f"({n_outside_axons / n_all_axons:.1%}) lie outside the tracing and were excluded."
+            )
+        if excluded_images:
+            log.info(
+                f"{len(excluded_images)} image(s) excluded by an EXCLUDE tag, not counted anywhere: "
+                + "; ".join(f"{name} ({why})" for name, why in excluded_images)
+            )
+        outside_file = save_outside_tracing(outside_frames, morph_dir, nerve_path.name)
+        if outside_file is not None:
+            log.info(f"Axons outside the tracing are listed in {outside_file.name}.")
+        if n_without_tracing:
+            log.warn(
+                f"{n_without_tracing} image(s) have no usable CSA tracing, so all their axons "
+                f"are included. If you trace them later, run "
+                f"python -m tools.archive_outputs --from morphometrics (it moves the old results "
+                f"aside and deletes nothing), then run morphometrics again to apply the tracing."
+            )
+
         if n_legacy_calibration:
             log.warn(
                 f"{n_legacy_calibration} segmented image(s) have no resize record (segmented by an older "
@@ -487,6 +568,7 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
                     suffix=suffix,
                     mag=nerve_mag,
                     log=log,
+                    tracing_overlays=tracing_overlays,
                 )
 
             except Exception as e:
@@ -582,6 +664,11 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
     
 
 def main():
+    parser = argparse.ArgumentParser(description="AxonID morphometrics.")
+    parser.add_argument("--input", metavar="FOLDER",
+                        help="study, animal or nerve folder (skips the folder prompt)")
+    args = parser.parse_args()
+
     print_panel(
         console,
         Panel(
@@ -600,15 +687,20 @@ def main():
     )
 
     while True:
-        input_dir = input(
-            "\nInput the path to the study, animal, or nerve folder "
-            "containing the segmented images: "
-        ).strip().strip('"')
+        if args.input is not None:
+            input_dir = args.input.strip().strip('"')
+        else:
+            input_dir = input(
+                "\nInput the path to the study, animal, or nerve folder "
+                "containing the segmented images: "
+            ).strip().strip('"')
 
         if not os.path.isdir(input_dir):
             console.print(
                 f"[red]✗  Folder not found: {input_dir}[/red]"
             )
+            if args.input is not None:
+                sys.exit(1)
             continue
 
         try:
@@ -619,6 +711,8 @@ def main():
             console.print(
                 f"[red]✗  {e}[/red]"
             )
+            if args.input is not None:
+                sys.exit(1)
             continue
 
     if not run(input_dir).success:

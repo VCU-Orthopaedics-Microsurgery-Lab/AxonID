@@ -35,6 +35,7 @@ from PIL import Image
 
 # ── Local ─────────────────────────────────────────────────────────────────────
 from utils.config import get_target_resolution
+from utils.image import read_gray_u8
 
 # (width, height) for cv2 — sourced from config.toml, see
 # utils.config.get_target_resolution() for the fallback default and
@@ -42,7 +43,7 @@ from utils.config import get_target_resolution
 TARGET_SIZE = get_target_resolution()
 
 
-def resize_img_with_scale(img_path: str, is_mask: bool = False) -> tuple[np.ndarray, float, tuple[int, int]]:
+def resize_img_with_scale(img_path: str, is_mask: bool = False, log=None) -> tuple[np.ndarray, float, tuple[int, int]]:
     """
     Same as resize_img(), but also return the scale factor that was applied
     and the original (width, height).
@@ -52,7 +53,10 @@ def resize_img_with_scale(img_path: str, is_mask: bool = False) -> tuple[np.ndar
     um_per_px_downsampled = um_per_px_original / scale. It is recorded
     exactly here rather than reconstructed later from rounded widths.
     """
-    img = cv2.imread(img_path, 0)
+    if is_mask:
+        img = cv2.imread(img_path, 0)       # masks are 8-bit BGW: read exactly as before
+    else:
+        img = read_gray_u8(img_path, log=log)
     if img is None:
         raise ValueError(f"Could not read image: {img_path}")
     h, w = img.shape[:2]
@@ -65,7 +69,7 @@ def resize_img_with_scale(img_path: str, is_mask: bool = False) -> tuple[np.ndar
     return cv2.resize(img, (new_w, new_h), interpolation=interpolation), scale, (w, h)
 
 
-def resize_img(img_path: str, is_mask: bool = False) -> np.ndarray:
+def resize_img(img_path: str, is_mask: bool = False, log=None) -> np.ndarray:
     """
     Load an image and downsample it to fit within TARGET_SIZE, preserving
     its original aspect ratio exactly.
@@ -99,7 +103,7 @@ def resize_img(img_path: str, is_mask: bool = False) -> np.ndarray:
     """
     # One implementation for both functions, so the scale recorded in
     # segmentation provenance is always the scale actually applied.
-    return resize_img_with_scale(img_path, is_mask=is_mask)[0]
+    return resize_img_with_scale(img_path, is_mask=is_mask, log=log)[0]
 
 
 def get_image_resolution(img_path: str) -> tuple[int, int]:

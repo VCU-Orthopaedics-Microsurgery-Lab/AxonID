@@ -48,7 +48,7 @@ import pandas as pd
 import tifffile
 
 # ── Local ─────────────────────────────────────────────────────────────────────
-from batch_axon.overlay.process_overlay_qupath import get_geojson_area
+from batch_axon.overlay.process_overlay_qupath import get_geojson_area, get_geojson_exclusion
 from morphometrics.distributions import bin_nerve_diameters
 from utils.config import get_pixel_size, load_config
 from utils.logger import AxonIDLogger
@@ -115,6 +115,7 @@ def make_aggregate_df(
                 ]),
                 on="label", how="left", validate="one_to_one",
             )
+            df.attrs["summary"] = _read_summary(f)      # CSA tracing rows, see get_nerve_data
             dfs.append(df)
             per_file[f.stem] = df
 
@@ -446,9 +447,27 @@ def get_nerve_data(
     image_rows = []
     img_count  = 0
     images_missing_csa = []
+    late_tracing   = []     # images with a tracing that morphometrics did not apply
+    outside_counts = []     # axons outside the tracing, per image where it was applied
+    inside_counts  = []     # axons inside it, for the same images
+
+    excluded_images = []    # images tagged EXCLUDE: in no number, listed with their reason
+    late_exclusion  = []    # tagged EXCLUDE after morphometrics ran: not applied yet
+    geojson_suffix  = config.get("csa_suffix_geojson", "_CSA.geojson")
 
     for stem, img_df in per_file.items():
         img_name = _strip_ome(stem.removesuffix(morph_suffix))
+
+        excluded = str((img_df.attrs.get("summary") or {}).get("Image excluded", ""))
+        if excluded.startswith("yes"):
+            excluded_images.append({
+                'name': img_name,
+                'reason': excluded.partition(":")[2].strip() or "no reason recorded",
+            })
+            continue
+        if mag == "40X" and csa_dir.exists() and get_geojson_exclusion(
+                str(csa_dir / f"{img_name}{geojson_suffix}"), quiet=True):
+            late_exclusion.append(img_name)
 
         if img_df.empty and "summary" in img_df.attrs:              # image with no axons
             img_width, orig_width = _widths_from_summary(img_df.attrs["summary"])
@@ -470,6 +489,22 @@ def get_nerve_data(
 
         px_size = _px_size_from(img_df, mag, img_width)
 
+        # Morphometrics records on the Summary sheet whether it excluded the
+        # axons outside the CSA tracing; the counts and means below come from
+        # the Axon sheet, so they already refer to the traced tissue only.
+        summary = img_df.attrs.get("summary") or {}
+        tracing_applied = str(summary.get("CSA tracing applied", "")).startswith("yes")
+        n_outside = None
+        if tracing_applied:
+            try:
+                n_outside = int(summary.get("Accepted axons outside tracing", 0))
+            except (TypeError, ValueError):
+                n_outside = 0
+            outside_counts.append(n_outside)
+            inside_counts.append(len(img_df))
+        elif img_csa is not None:
+            late_tracing.append(img_name)
+
         row = {
             'name':        img_name,
             'resolution': (
@@ -477,6 +512,7 @@ def get_nerve_data(
             ),
             'csa_um2':     img_csa,
             'total_axons': len(img_df),
+            'axons_outside_tracing': n_outside,     # None when no tracing was applied
             'gratio':      (
                 img_df[gratio_col].mean() if gratio_col in img_df.columns
                 else img_df['gratio'].mean() if 'gratio' in img_df.columns
@@ -517,10 +553,42 @@ def get_nerve_data(
                 f"image(s): {shown}{more}"
             )
 
+    if late_tracing:
+        shown = ', '.join(late_tracing[:5])
+        more  = f", +{len(late_tracing) - 5} more" if len(late_tracing) > 5 else ""
+        log.warn(
+            f"{len(late_tracing)} image(s) have a CSA tracing that morphometrics did not apply "
+            f"({shown}{more}): axons outside the tracing are still counted. Run "
+            f"python -m tools.archive_outputs --from morphometrics (it moves the old results "
+            f"aside and deletes nothing), then run morphometrics again."
+        )
+    if excluded_images:
+        log.info(
+            f"  {len(excluded_images)} image(s) excluded by an EXCLUDE tag and left out of every number: "
+            + "; ".join(f"{e['name']} ({e['reason']})" for e in excluded_images)
+        )
+    if late_exclusion:
+        shown = ', '.join(late_exclusion[:5])
+        more  = f", +{len(late_exclusion) - 5} more" if len(late_exclusion) > 5 else ""
+        log.warn(
+            f"{len(late_exclusion)} image(s) are tagged EXCLUDE but morphometrics did not apply it "
+            f"({shown}{more}): they are still counted. Run "
+            f"python -m tools.archive_outputs --from morphometrics, then run morphometrics again."
+        )
+    n_out = sum(outside_counts)
+    n_all = n_out + sum(inside_counts)
+    if n_all:
+        log.info(
+            f"  {n_out} of {n_all} accepted axons ({n_out / n_all:.1%}) "
+            f"lie outside the CSA tracing and are excluded"
+        )
+
     aggregate = {
         'fourx_csa_um2': fourx_csa,
         'total_images':  img_count,
+        'excluded_images': excluded_images,
         'total_axons':   len(agg_df),
+        'axons_outside_tracing': sum(outside_counts) if outside_counts else None,
         'mean_gratio':   (
             agg_df[gratio_col].mean() if gratio_col in agg_df.columns
             else agg_df['gratio'].mean() if 'gratio' in agg_df.columns

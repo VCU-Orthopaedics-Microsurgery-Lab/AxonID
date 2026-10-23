@@ -45,6 +45,27 @@ Other species, stains or magnifications may work but are not validated. You can 
 
 ## Installation
 
+### System requirements
+
+| | Requirement |
+|---|---|
+| Operating system | Windows or Linux (macOS: CPU only, not tested) |
+| Python | 3.11 |
+| RAM | 8 GB minimum, 16 GB recommended (peak use measured at about 2 GB) |
+| GPU | Optional. An NVIDIA GPU with a current driver makes segmentation faster and is needed for training your own model |
+
+**Measured speed** for one 1440 × 1024 px image at 40X. These are single runs on one dataset (12 images, 4,442 axons); other computers and images will differ.
+
+| Hardware | Segmentation | Morphometrics | Peak RAM | Peak GPU memory |
+|---|---|---|---|---|
+| CPU only: Intel Core i7-14700 (20 cores / 28 threads), 34 GB RAM | 21 s | 3 s | 1.7 GB (segment), 2.1 GB (morphometrics) | n/a |
+| GPU: NVIDIA H100 80 GB, YOUR_CPU_MODEL_CLUSTER | YOUR_VALUE_HERE | 3 s (same CPU code)* | YOUR_VALUE_HERE | YOUR_VALUE_HERE |
+
+Only segmentation uses the GPU; morphometrics and workbook compilation run on the CPU.
+
+
+### Install
+
 You need:
 
 * [Miniforge](https://github.com/conda-forge/miniforge): provides conda and the **Miniforge Prompt**. Conda installs the correct Python (3.11) for you. Miniforge is free for institutional use (Anaconda's default package channel, used by Anaconda and Miniconda, requires a paid licence for large organisations).
@@ -77,9 +98,17 @@ Paths you paste at AxonID's prompts may include quotes (as Windows "Copy as path
 
 Install Python 3.11 from [python.org](https://www.python.org/downloads/), then in the AxonID folder:
 
+**Windows:**
+```cmd
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+python install.py                # add --gpu for an NVIDIA GPU
+```
+
+**Linux / macOS:**
 ```bash
-py -3.11 -m venv .venv          # Windows (python3.11 -m venv .venv on Linux/macOS)
-.venv\Scripts\activate          # Windows (source .venv/bin/activate on Linux/macOS)
+python3.11 -m venv .venv
+source .venv/bin/activate
 python install.py                # add --gpu for an NVIDIA GPU
 ```
 
@@ -180,6 +209,7 @@ Rules:
 * 4X images go in the nerve's `4X_TIFF` folder and must be named `<nerve folder name>_4X_<anything>`, as `.tif`, `.tiff`, `.ome.tif` or `.ome.tiff` (any upper/lower case). A nerve can have several 4X images; their CSAs are added.
 * Each CSA file is named after its image without the extension: image `X.ome.tif` (or `X.tif`) gives `CSA/X_CSA.geojson`.
 * `segment` and `morphometrics` accept a study, animal or nerve folder. `batch_axon` needs the study folder.
+* Image format. Use 8-bit grayscale or RGB TIFFs (8-bit is recommended). 16-bit images are converted to 8-bit on loading. If your camera stores 12- or 14-bit data unscaled in a 16-bit file, AxonID rescales it and prints a warning; check the result, or export the image as 8-bit. 32-bit floating-point and multi-channel (more than 3) images are rejected with an error.
 
 ---
 
@@ -201,7 +231,7 @@ python -m morphometrics    # 2. per-axon measurements -> Morphometrics/
 **1. Segmentation** lists the available models (recommended model first, then your own) and writes one BGW TIFF per image (`<image>_segmented.tif`) to the nerve's `Segmented/` folder. Each segmented TIFF records the model, recipe, original size and resize scale.
 *Check:* the overlays in the nerve's `QC/` folder. Are axons (white) and myelin (grey) where they should be, including in regenerating tissue and near the edges of the tissue?
 
-**2. Morphometrics** separates touching axons, pairs each axon with its fiber, measures every pair and writes one workbook per image plus a diameter distribution per nerve to `Morphometrics/`.
+**2. Morphometrics** separates touching axons, pairs each axon with its fiber, measures every pair and writes one workbook per image plus a diameter distribution per nerve to `Morphometrics/`. If an image has a CSA tracing (see [CSA tracing in QuPath](#csa-tracing-in-qupath)), only the axons inside it are measured.
 *Check:* the watershed figure in `QC/` (are touching axons split correctly, and fused ones not over-split?), the Summary sheet of a few workbooks (pixel size and calibration source as expected?), and whether axon counts and mean g-ratio are plausible for the tissue.
 
 Both stages skip work that is already done (images with a segmentation, datasets with complete workbooks), so you can rerun them safely. To redo a nerve, delete its `Segmented/` or `Morphometrics/` folder first.
@@ -231,18 +261,22 @@ python -m batch_axon --compile-only        # only rebuild the study workbook fro
 
 ## CSA tracing in QuPath
 
-CSA (cross-sectional area) is needed for axon density and for the estimated total axon count. Trace it in [QuPath](https://qupath.github.io/) on the **original** images.
+CSA (cross-sectional area) is needed for axon density and for the estimated total axon count. Trace it in [QuPath](https://qupath.github.io/) (tested on v0.7.0) on the **original** images.
 
 1. Create a QuPath project per cohort and add the 40X images (and the 4X whole-nerve images) from the study folders.
 2. For each image, draw the region to measure with the Polygon or Brush tool and set the annotation **Name** to `+`. Draw regions to exclude (for example epineurium or artifacts inside the traced area) and name them `-`. Several `+` and `-` regions are allowed: AxonID measures the union of `+` minus the union of `-`.
-   * 40X images: trace the nerve tissue within the field, that is, the area the axon count refers to.
+   * 40X images: trace all the nerve tissue in the field that contains axons. Axons outside the tracing are not measured.
    * 4X images: trace the whole nerve.
 3. Open `batch_axon/overlay/export_csa_geojson.groovy` in QuPath (Automate > Script editor).
 4. Run it once as is (`DRY_RUN = true`): it lists what it would export and every annotation that needs attention (untagged, open paths, zero area).
-5. Fix any problems, set `DRY_RUN = false` and run again. The GeoJSONs are written to each nerve's `CSA/` folder.
+5. Fix any problems, set exactly `DRY_RUN = false` (lowercase `false`) and run again. The GeoJSONs are written to each nerve's `CSA/` folder.
 6. Use **Run**, not "Run for project": the script already loops over every image in the project.
 
 Lines (polylines) and unclosed polygons have no area and are not exported; re-trace them as closed polygon shapes.
+
+**The tracing decides which axons are measured.** When an image has a tracing, morphometrics measures only the axons whose centre lies inside it (the `+` regions minus the `-` regions). Counts, g-ratios, diameters, distributions, densities and the estimated total axons then all refer to the traced tissue. The axons outside the tracing are not lost: their number is on the image's Summary sheet (*Accepted axons outside tracing*), they are listed on the image's *Outside tracing* sheet, and all of a nerve's excluded axons are pooled in `Morphometrics/<nerve>_outside_tracing.xlsx` with their position in the original image (`qupath_x`, `qupath_y`: the pixels QuPath uses, x = column, y = row), so each one can be found again. A large share outside means that the tracing leaves out axon-bearing tissue, or that something outside the nerve was segmented; check the `QC/` image.
+
+**Trace before you run morphometrics.** An image with no tracing yet is measured in full, and morphometrics skips images that are already done, so a tracing drawn afterwards is not applied automatically. Batch_Axon warns when it finds this. To apply the tracing, move the nerve's `Morphometrics/` folder aside (do not delete it) and run morphometrics again.
 
 ---
 
@@ -252,11 +286,12 @@ Lines (polylines) and unclosed polygons have no area and are not exported; re-tr
 
 | Sheet | Contents |
 |---|---|
-| Summary | Model, recipe, pixel size, original size, resize scale, morphometrics rules, headline means |
+| Summary | Model, recipe, pixel size, original size, resize scale, whether a CSA tracing was applied and how many axons fell outside it, morphometrics rules, headline means |
 | Axon | Per axon: area, equivalent diameter, major/minor axis, solidity, eccentricity, orientation, position |
 | Myelin+G-ratio | Per axon: myelin area and thickness, fiber area and equivalent diameter, g-ratios |
 | Fiber | Per fiber: area, equivalent diameter, axes, deformation, eccentricity, orientation |
 | Pixel Measurements | The same accepted axons in pixel units, for checking calibration |
+| Outside tracing | Only when a CSA tracing excluded axons: those axons (position in the segmented and the original image, diameter, g-ratio). They are not in the other sheets |
 
 Every row also carries `resolution` (segmented size), `original_resolution`, `resize_scale` and `px_size_um`.
 
@@ -270,9 +305,15 @@ Every row also carries `resolution` (segmented size), `original_resolution`, `re
 
 **Acceptance rules:** a fiber is kept when its axon equivalent diameter is at least 1.01 µm (when calibrated) and both g-ratios lie strictly between 0 and 1.
 
+**Objects cut by the image border** are kept and measured from the part that is visible. A cut axon's diameter is underestimated; its g-ratio changes little, because the axon and its myelin are cut together. Cut objects are also counted, so counts and densities are slightly high: in YOUR_DATASET, YOUR_VALUE_HERE% of the axon objects touched the image border. AxonID 1.0.0 applies no border rule, because that would change the validated measurements. The effect is similar in images of the same size and magnification, so compare groups that were imaged the same way.
+
 ### Per nerve: `Morphometrics/<nerve>_binned.xlsx`
 
 Pooled fiber-diameter distributions at three resolutions (0.5, 2 and 5 µm bins; set under `[morphometrics_bins]` in `config.toml`), with count, percent, cumulative percent and g-ratio mean and SD per bin.
+
+### Per nerve: `Morphometrics/<nerve>_outside_tracing.xlsx`
+
+Written only when a CSA tracing excluded axons. One row per excluded axon across the nerve's images: image, label, `qupath_x` and `qupath_y` (position in the original image, in QuPath's pixels), position in the segmented image, diameters and g-ratio. These axons are in no count, mean, distribution or density.
 
 ### Per animal and per study (Batch_Axon)
 
@@ -282,11 +323,11 @@ Pooled fiber-diameter distributions at three resolutions (0.5, 2 and 5 µm bins;
 estimated total axons = total sampled axons / total sampled 40X CSA x 4X whole-nerve CSA
 ```
 
-The estimate is given only when every 40X image has a CSA and the 4X CSA is complete; otherwise the cell reads `missing` (red). Derived cells are live Excel formulas, so correcting a value after review updates them. A measured 0 is highlighted yellow for review; an image with no axons stays in the totals (with its CSA) rather than being dropped. In the totals row, g-ratio and axon diameter are averaged over all axons of the nerve (each image's mean weighted by its axon count), the same pooling as total axons and the distributions. The study workbook has a Provenance sheet.
+The estimate is given only when every 40X image has a CSA and the 4X CSA is complete; otherwise the cell reads `missing` (red). Derived cells are live Excel formulas, so correcting a value after review updates them. A measured 0 is highlighted yellow for review; an image with no axons stays in the totals (with its CSA) rather than being dropped. The last two columns, *Axons Outside Tracing* and *Outside Tracing (%)*, show how many accepted axons lay outside the image's CSA tracing and were excluded from every other number in the row (the share is outside / (outside + counted)); they read `n/a` for an image without an applied tracing, and anything above 0 is highlighted yellow for review. The totals row gives the sum and the share over the images that had a tracing. In the totals row, g-ratio and axon diameter are averaged over all axons of the nerve (each image's mean weighted by its axon count), the same pooling as total axons and the distributions. The study workbook has a Provenance sheet.
 
 ### Review images: `QC/`
 
-Segmentation overlays and watershed figures (axon and fiber separation, matched centroids), controlled by `[qc]` in `config.toml`.
+Segmentation overlays and watershed figures (axon and fiber separation, matched centroids), controlled by `[qc]` in `config.toml`. For images with a CSA tracing, the watershed figure also draws the tracing outline (yellow; dashed around excluded `-` regions) and marks each axon outside it with a cyan x; the row title gives how many were excluded.
 
 ---
 
@@ -370,7 +411,7 @@ Changing `epochs` or `batch_size` is allowed but recorded in the checkpoint as a
 
 ## Fixed settings (the AxonID recipe)
 
-These settings define a validated AxonID model and measurement. They live in `utils/recipe.py`; adding them to `config.toml` stops AxonID with an explanation rather than being silently ignored.
+These settings define a validated AxonID model and measurement. They live in `utils/recipe.py`. If you attempt to override them by adding them to `config.toml`, AxonID will halt and display an error explaining that these settings are locked.
 
 | Area | Setting |
 |---|---|
@@ -460,6 +501,7 @@ They cover mask snapping, calibration, the train/validation split, augmentation,
 | A nerve is not found | Its image folder name does not end in one of `tiff_suffixes` (e.g. `40X_TIFF`). |
 | Measurements in pixels instead of µm | No `pixel_size_um` entry for that magnification and original image width. |
 | "no resize record" warning | The images were segmented by an older version. Pixel size is looked up at the segmented width, assuming no downsampling. Re-segment to remove the warning. |
+| Warning that a CSA tracing "did not apply" | The tracing was drawn after morphometrics ran, so axons outside it are still counted. Move the nerve's `Morphometrics/` folder aside (do not delete it) and run morphometrics again. |
 | CSA "missing" | No `CSA/<image>_CSA.geojson`, no `+` annotation in it, or the file name does not match the image. Run the QuPath script with `DRY_RUN = true` to see what is missing. |
 | "checksum does not match" | The model file is incomplete or not the released file. Delete it and run `python -m utils.fetch_models`. |
 | "AxonID loads .safetensors model files only" | The model is an older `.pt` file. If you made it or trust its source, convert it with `python -m tools.convert_model <file.pt>` and put the `.safetensors` file in `models/user/`. |

@@ -6,8 +6,12 @@ Purpose
     nerve that does not have complete output yet.
 
 Usage
-    python -m segment
-    from segment.__main__ import run      (used by batch_axon)
+    python -m segment                                   prompts for the folder and the model
+    python -m segment --input FOLDER --model MODEL      no prompts (cluster / scripted use)
+    from segment.__main__ import run                    (used by batch_axon)
+
+    MODEL is a number from the menu, or a model file name, file stem or label
+    (for example axonid_v1_unetpp_dn169_aug).
 
 Inputs
     A folder in the Study/Animal/Nerve/<mag>_TIFF layout (see README).
@@ -41,6 +45,7 @@ from __future__ import annotations
 import os
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 os.environ['OPENCV_LOG_LEVEL'] = 'ERROR'
+import argparse
 import sys
 import time
 from datetime import datetime
@@ -110,7 +115,23 @@ def select_model(models: list):
         console.print(f"[red]Please enter a number between 1 and {len(models)}[/red]")
 
 
-def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
+def find_model(models: list, choice: str):
+    """Match a --model value: menu number, file name, file stem or label.
+
+    Returns the ModelEntry, or None when nothing matches exactly.
+    """
+    c = choice.strip().strip('"').lower()
+    if c.isdigit():
+        idx = int(c) - 1
+        return models[idx] if 0 <= idx < len(models) else None
+    for m in models:
+        if c in (m.path.name.lower(), m.path.stem.lower(), m.label.lower()):
+            return m
+    return None
+
+
+def run(input_dir: str | Path, quiet_banner: bool = False,
+        model: str | None = None) -> StageResult:
     """Run segmentation for a study, animal, or nerve folder.
 
     Parameters
@@ -123,6 +144,11 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
         caller (e.g. batch_axon) has already printed the study path once
         and doesn't need it repeated for every stage it invokes. Does
         not affect this stage's own scan — it still runs in full.
+
+    model
+        Optional model to use without the menu: a menu number, or a model
+        file name, file stem or label (see find_model). When None, the
+        menu is shown and you choose interactively.
 
     Returns
     -------
@@ -140,8 +166,8 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
 
     Notes
     -----
-    Model selection remains interactive. Batch_Axon calls this function
-    after resolving and validating the study-level input.
+    Without the model argument, model selection is interactive. Batch_Axon
+    calls this function after resolving and validating the study-level input.
     """
     run_start = time.time()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -215,7 +241,19 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
         }, title="SEGMENTATION COMPLETE", elapsed_label="Elapsed time")
         return StageResult(False, time.time() - run_start, 0)
 
-    selected = select_model(models)
+    if model is not None:
+        selected = find_model(models, model)
+        if selected is None:
+            log.error(
+                f"Model '{model}' not found. Available: "
+                + ", ".join(m.path.stem for m in models)
+            )
+            log.finalize({'Folder': str(input_dir),
+                          'Nerves processed': 0, 'Nerves skipped': 0},
+                         title="SEGMENTATION COMPLETE", elapsed_label="Elapsed time")
+            return StageResult(False, time.time() - run_start, 0)
+    else:
+        selected = select_model(models)
     selected_model_path = selected.path
     checksum_ok = verify_file(selected_model_path, selected)
     if checksum_ok is False:
@@ -429,6 +467,14 @@ def run(input_dir: str | Path, quiet_banner: bool = False) -> StageResult:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="AxonID segmentation.")
+    parser.add_argument("--input", metavar="FOLDER",
+                        help="study, animal or nerve folder (skips the folder prompt)")
+    parser.add_argument("--model", metavar="MODEL",
+                        help="menu number, or model file name, file stem or label "
+                             "(skips the model menu)")
+    args = parser.parse_args()
+
     print_panel(console, Panel(
         Align.center(
             "[bold white]Automated Axon-Myelin Brightfield Image Segmentation[/bold white]"
@@ -440,14 +486,19 @@ def main():
         padding=(1, 4)
     ))
 
-    # ── Interactive study-folder input ─────────────────────────────────────
+    # ── Study-folder input: --input, or interactive prompt ────────────────
     while True:
-        input_dir = input(
-            "\nInput the path to the study, animal, or nerve folder: "
-        ).strip().strip('"')
+        if args.input is not None:
+            input_dir = args.input.strip().strip('"')
+        else:
+            input_dir = input(
+                "\nInput the path to the study, animal, or nerve folder: "
+            ).strip().strip('"')
 
         if not os.path.isdir(input_dir):
             console.print(f"[red]✗  Folder not found: {input_dir}[/red]")
+            if args.input is not None:
+                sys.exit(1)
             continue
 
         try:
@@ -455,8 +506,10 @@ def main():
             break
         except ValueError as e:
             console.print(f"[red]✗  {e}[/red]")
+            if args.input is not None:
+                sys.exit(1)
 
-    if not run(input_dir).success:
+    if not run(input_dir, model=args.model).success:
         sys.exit(1)
 
 

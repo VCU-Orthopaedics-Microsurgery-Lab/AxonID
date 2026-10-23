@@ -22,7 +22,8 @@ Outputs
         is not calibrated) plus the same pairs in pixel units; optionally
         the watershed label images and rejected centroids for QC.
     save_morphometrics(): {stem}_morphometrics.xlsx with Summary, Axon,
-        Myelin+G-ratio, Fiber and Pixel Measurements sheets.
+        Myelin+G-ratio, Fiber and Pixel Measurements sheets, plus an
+        Outside tracing sheet when a CSA tracing excluded axons.
     save_watershed_qc(): one QC figure per nerve.
 
 G-ratio
@@ -289,6 +290,7 @@ def get_morphometrics(
     n_filtered_area           = 0
     n_filtered_myelin         = 0
 
+
     def _filtered(x_coord: float, y_coord: float) -> None:
         filtered_centroids.append((x_coord, y_coord))
             
@@ -518,6 +520,25 @@ def _get_watershed_seeding_text() -> str:
     return f"distance-threshold={MORPHOMETRICS.distance_threshold:g}"
 
 
+def _draw_region(ax, region) -> None:
+    """
+    Outline a shapely region on a QC axis.
+
+    Args:
+        ax:     matplotlib axis (pixel coordinates, pixel centres at integers)
+        region: shapely Polygon or MultiPolygon; outer edges are drawn solid,
+                holes (excluded "-" areas) dashed
+    """
+    for poly in getattr(region, 'geoms', [region]):
+        if poly.is_empty:
+            continue
+        x, y = poly.exterior.xy
+        ax.plot(x, y, color='yellow', linewidth=1.4)
+        for ring in poly.interiors:
+            hx, hy = ring.xy
+            ax.plot(hx, hy, color='yellow', linewidth=1.2, linestyle='--')
+
+
 def save_watershed_qc(
     seg_images: list,
     all_data: list,
@@ -526,6 +547,7 @@ def save_watershed_qc(
     suffix: str,
     mag: str,
     log: AxonIDLogger = None,
+    tracing_overlays: dict | None = None,
 ) -> None:
     """
     Generate a watershed QC image for all segmented images in a nerve.
@@ -556,6 +578,14 @@ def save_watershed_qc(
         suffix: Model/output suffix, e.g. '_M1'.
         mag: Magnification string.
         log: Optional AxonIDLogger.
+        tracing_overlays: Optional {segmented image path: (region, outside_df)}
+            for images with a CSA tracing. Column 3 then also shows the
+            tracing outline (solid = outer edge, dashed = excluded holes) and
+            marks the axons outside it with a cyan x. An optional third item
+            is the reason of an excluded image: its row title says so, there
+            is no outline and every axon is marked. These axons are still
+            in all_data (the QC shows every accepted axon) but are excluded
+            from the workbooks.
     """
     try:
         import matplotlib
@@ -615,10 +645,19 @@ def save_watershed_qc(
 
         n_kept     = len(df) if df is not None and not df.empty else 0
         n_filtered = len(filtered_xy)
+        overlay = tuple((tracing_overlays or {}).get(img_path, ())) + (None, None, None)
+        trace_region, trace_outside, trace_reason = overlay[:3]
+        n_out      = len(trace_outside) if trace_outside is not None else 0
+        if trace_reason:
+            out_text = f"  |  IMAGE EXCLUDED: {trace_reason} (not counted)"
+        elif trace_region is not None:
+            out_text = f"  |  {n_out} outside tracing (excluded)"
+        else:
+            out_text = ""
         row_label  = (
-            f"{img_path.name}  —  {n_kept} kept  |  {n_filtered} filtered"
+            f"{img_path.name}  —  {n_kept} kept  |  {n_filtered} filtered{out_text}"
             if qf_on else
-            f"{img_path.name}  —  {n_kept} axons"
+            f"{img_path.name}  —  {n_kept} axons{out_text}"
         )
         ax_over.set_title(row_label, fontsize=7, fontweight='normal', pad=4) 
 
@@ -663,6 +702,17 @@ def save_watershed_qc(
         if df is not None and not df.empty and 'x' in df.columns and 'y' in df.columns:
             ax_over.scatter(df['y'].values, df['x'].values,
                             s=6, c='red', marker='.', linewidths=0)
+            
+        # CSA tracing outline and the axons it excludes (axis limits kept).
+        if trace_region is not None or trace_reason:
+            xlim, ylim = ax_over.get_xlim(), ax_over.get_ylim()
+            if trace_region is not None:
+                _draw_region(ax_over, trace_region)
+            if trace_outside is not None and not trace_outside.empty:
+                ax_over.scatter(trace_outside['y'].values, trace_outside['x'].values,
+                                s=26, c='cyan', marker='x', linewidths=1.0)
+            ax_over.set_xlim(xlim)
+            ax_over.set_ylim(ylim)
         ax_over.axis('off')
 
         # ── Col 4: Filter map (qf ON only) ────────────────────────────────────
@@ -729,16 +779,25 @@ def save_morphometrics(
     stem:       str,
     provenance: dict = None,
     calibration: Calibration | None = None,
+    tracing: dict | None = None,
+    outside_df: pd.DataFrame | None = None,
 ) -> str:
     """
     Save morphometrics to a 5-sheet Excel file.
 
-    Sheet 1 — Summary              : provenance block + one headline row
-    Sheet 2 — Axon                 : per-axon axon measurements (µm)
-    Sheet 3 — Myelin+G            : per-axon myelin and g-ratio measurements (µm)
-    Sheet 4 — Fiber               : per-axon fiber measurements (µm)
-    Sheet 5 — Pixel Measurements  : accepted measurements in pixel units
-                                    for calibration/sanity checking
+    Sheet 1 — Summary              :provenance block + one headline row
+    Sheet 2 — Axon                 :per-axon axon measurements (µm)
+    Sheet 3 — Myelin+G             :per-axon myelin and g-ratio measurements (µm)
+    Sheet 4 — Fiber                :per-axon fiber measurements (µm)
+    Sheet 5 — Pixel Measurements   :accepted measurements in pixel units
+                                     for calibration/sanity checking
+    Sheet 6 — Outside tracing      :only when a CSA tracing was applied and
+                                     axons fell outside it; those axons are
+                                     excluded from sheets 1-5
+
+    tracing is None when no CSA tracing was applied; otherwise a dict with
+    n_all (accepted axons before the tracing) and n_outside. df and pixel_df
+    must then hold only the axons inside the tracing (morphometrics/tracing.py).
 
     The pixel-unit sheet contains the same accepted axon-fiber pairs as
     the primary morphometric output. It is not a pre-filter or raw
@@ -807,6 +866,22 @@ def save_morphometrics(
     else:
         cal_rows = []
 
+    if tracing is None:
+        tracing_rows = [('CSA tracing applied', 'no (all accepted axons are included)')]
+    else:
+        if tracing.get('excluded'):
+            tracing_rows = [
+                ('CSA tracing applied',            'no (image excluded)'),
+                ('Image excluded',                 f"yes: {tracing['excluded']}"),
+                ('Accepted axons in excluded image', tracing['n_all']),
+            ]
+        else:
+            tracing_rows = [
+                ('CSA tracing applied',            'yes (axons outside the tracing are excluded)'),
+                ('Accepted axons (all)',           tracing['n_all']),
+                ('Accepted axons outside tracing', tracing['n_outside']),
+            ]
+
     prov_rows = [
         ('AxonID version',     axonid_version),
         ('Model',              provenance.get('model_name',       'unknown')),
@@ -817,6 +892,7 @@ def save_morphometrics(
         ('Patch size',         provenance.get('patch_size',       'unknown')),
         ('Magnification',      provenance.get('magnification',    'unknown')),
         *cal_rows,
+        *tracing_rows,
         ('Morphometrics rules', MORPHOMETRICS_ID),
         ('Watershed seeding',  _get_watershed_seeding_text()),
         ('Watershed disk',     MORPHOMETRICS.dilation_disk),
@@ -931,6 +1007,17 @@ def save_morphometrics(
             ),
         ).font = prov_font
     _autofit_columns(ws5)
+
+    # ── Sheet 6 — Outside tracing ─────────────────────────────────────────────
+    # Accepted axons that lie outside the CSA tracing. They are excluded from
+    # every sheet above and listed here, so aberrant segmentation outside the
+    # traced tissue stays visible.
+    if outside_df is not None and not outside_df.empty:
+        ws6 = wb.create_sheet('Outside tracing')
+        outside_cols = [c for c in outside_df.columns if any(c.startswith(p) for p in
+            ['image', 'label', 'excluded', 'qupath', 'x', 'y', 'axon_area', 'axon_diam', 'myelin', 'fiber_equiv', 'gratio'])]
+        write_df_to_sheet(ws6, outside_df[outside_cols])
+        _autofit_columns(ws6)
 
     wb.save(str(out_path))
     return str(out_path)

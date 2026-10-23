@@ -12,6 +12,18 @@
  * Supports annotations identified through either the Name field or
  * Classification / Set class.
  *
+ * EXCLUDING A WHOLE IMAGE
+ * Give any annotation on the image (any shape, a small box is enough) the
+ * classification "EXCLUDE" (any capitalisation) and write the REASON in the
+ * annotation's Name or its Description. AxonID then leaves the whole image
+ * out of every count, mean, distribution and total, and lists it with the
+ * reason. A reason is required: an EXCLUDE annotation with neither Name nor
+ * Description is reported under ANNOTATIONS NEEDING REVIEW and is NOT
+ * exported, so the image is not excluded. The reason is written to the
+ * GeoJSON as the feature's name, so it reaches AxonID whichever field you
+ * used. The image's "+" / "-" annotations are not needed, but may stay.
+ * Only 40X images use this tag.
+ *
  * The NerveFolder is recovered from each image's stored file path rather
  * than hardcoded. Images without qualifying CSA annotations are skipped
  * and reported in the final summary.
@@ -106,6 +118,19 @@ int exported = 0
 int skipped  = 0
 def skippedByReason = [:].withDefault { [] }
 
+// Whole-image exclusion tag (see header): class "EXCLUDE", reason in Name or Description.
+def isExclude = { a -> (a.getPathClass()?.getName() ?: "").trim().equalsIgnoreCase("EXCLUDE") }
+def reasonOf = { a ->
+    def n = (a.getName() ?: "").trim()
+    if (n) return n
+    def d = null
+    try { d = a.getDescription() } catch (Throwable t) { d = a.getMetadata()?.get("description") }
+    return (d ?: "").toString().trim()
+}
+def excludedImages        = []     // [image, reason]
+def excludeNoReasonList   = []     // [image, roiType]
+
+
 def zeroAreaList       = []
 def openPathList       = []
 def untaggedList       = []
@@ -155,7 +180,21 @@ for (entry in project.getImageList()) {
         matchesName || matchesClass
     }
 
-    def untagged = imageData.getHierarchy().getAnnotationObjects().findAll { !rawMatches.contains(it) }
+    def excludeValid = []
+    imageData.getHierarchy().getAnnotationObjects().findAll { isExclude(it) }.each { a ->
+        def why = reasonOf(a)
+        if (why) {
+            excludeValid << [ann: a, reason: why]
+        } else {
+            excludeNoReasonList << [image: imageName, roiType: a.getROI()?.getClass()?.getSimpleName() ?: "null"]
+            print "  EXCLUDE tag WITHOUT a reason (Name or Description): not exported, image NOT excluded"
+        }
+    }
+    if (!excludeValid.isEmpty() && magFolder?.getFileName()?.toString()?.toUpperCase()?.startsWith("4X")) {
+        print "  WARN: EXCLUDE on a 4X image is not used by AxonID (only 40X images)"
+    }
+
+    def untagged = imageData.getHierarchy().getAnnotationObjects().findAll { !rawMatches.contains(it) && !isExclude(it) }
     untagged.each { u ->
         def r       = u.getROI()
         def nm      = u.getName()
@@ -171,7 +210,7 @@ for (entry in project.getImageList()) {
         print "  UNTAGGED [name=${nm ?: '-'} class=${cn ?: '-'}] ${rt} px2=${fmt(aPx)} um2=${fmt(aUm2)}${nearMiss ? '  <-- WHITESPACE NEAR-MISS' : ''}"
     }
 
-    if (rawMatches.isEmpty()) {
+    if (rawMatches.isEmpty() && excludeValid.isEmpty()) {
         print "SKIP (no +/-): ${imageName}"
         skipped++
         skippedByReason["No +/- annotations"] << imageName
@@ -198,7 +237,7 @@ for (entry in project.getImageList()) {
         }
     }
 
-    if (annotations.isEmpty()) {
+    if (annotations.isEmpty() && excludeValid.isEmpty()) {
         print "SKIP (nothing left): ${imageName}"
         skipped++
         skippedByReason["All annotations open-path or zero-area"] << imageName
@@ -263,11 +302,22 @@ for (entry in project.getImageList()) {
         print "  [${cls}]${nameTag} px2=${fmt(area)} um2=${fmt(areaUm2)}"
     }
 
+    // The exclusion annotation is exported as a copy whose NAME is the reason, so the
+    // GeoJSON carries it whether it was typed as Name or as Description.
+    def exportList = new ArrayList(annotations)
+    excludeValid.each { e ->
+        def copy = new PathAnnotationObject(e.ann.getROI(), e.ann.getPathClass())
+        copy.setName(e.reason)
+        exportList << copy
+        excludedImages << [image: imageName, reason: e.reason]
+        print "  [EXCLUDE] ${e.reason}"
+    }
+
     def csaDir = nerveFolder.resolve("CSA")
     def displayPath = shortPath(studyFolder, animalFolder, nerveFolder, "${imageStem}_CSA.geojson")
 
     if (DRY_RUN) {
-        print "DRY RUN: ${annotations.size()} ann"
+        print "DRY RUN: ${exportList.size()} ann"
         print "  -> ${displayPath}"
         exported++
         continue
@@ -275,8 +325,8 @@ for (entry in project.getImageList()) {
 
     csaDir.toFile().mkdirs()
     def outPath = csaDir.resolve("${imageStem}_CSA.geojson")
-    exportObjectsToGeoJson(annotations, outPath.toString(), "FEATURE_COLLECTION")
-    print "Wrote: ${annotations.size()} ann"
+    exportObjectsToGeoJson(exportList, outPath.toString(), "FEATURE_COLLECTION")
+    print "Wrote: ${exportList.size()} ann"
     print "  -> ${displayPath}"
     exported++
 }
@@ -288,7 +338,7 @@ print "=" * 40
 
 int nearMissCount = untaggedList.count { it.nearMiss }
 int openInclCount = openPathList.count { it.cls == "+" }
-int needsReview   = untaggedList.size() + openPathList.size() + zeroAreaList.size()
+int needsReview   = untaggedList.size() + openPathList.size() + zeroAreaList.size() + excludeNoReasonList.size()
 
 if (needsReview == 0) {
     print "Annotations needing review: 0"
@@ -297,10 +347,23 @@ if (needsReview == 0) {
     print "  untagged:   ${untaggedList.size()}  (whitespace near-misses: ${nearMissCount})"
     print "  open-path:  ${openPathList.size()}  (inclusions '+': ${openInclCount})"
     print "  zero-area:  ${zeroAreaList.size()}"
+    print "  EXCLUDE without reason: ${excludeNoReasonList.size()}"
 }
 print ""
 print "Images exported: ${exported}  |  Images skipped: ${skipped}"
 
+
+if (!excludedImages.isEmpty()) {
+    print ""
+    print "IMAGES MARKED EXCLUDED (${excludedImages.size()}), left out of every AxonID number:"
+    excludedImages.each { print "  ${it.image}: ${it.reason}" }
+}
+
+if (!excludeNoReasonList.isEmpty()) {
+    print ""
+    print "EXCLUDE tags WITHOUT A REASON (${excludeNoReasonList.size()}), NOT exported; type the reason in Name or Description:"
+    excludeNoReasonList.each { print "  ${it.image} (${it.roiType})" }
+}
 
 if (!openPathList.isEmpty()) {
     print ""
