@@ -477,8 +477,11 @@ python -m tools.class_balance                              # class percentages o
 python -m utils.fetch_models                               # download / re-check the released models
 python -m tools.convert_model <model.pt>                   # convert a trusted older .pt model to .safetensors
 python utils/version.py                                    # versions and GPU
+python -m utils.check_update                               # is a newer AxonID release out?
 python -m utils                                            # overview of the shared modules
 ```
+
+**Staying up to date:** `python -m utils.check_update` compares your version with the latest release on GitHub (it needs internet access; nothing else in AxonID checks for updates). To be told about new releases by email, open the repository on GitHub and choose Watch > Custom > Releases. Release notes say when a version changes results.
 
 **Automated tests** (synthetic data only, about 10 seconds, no models needed):
 

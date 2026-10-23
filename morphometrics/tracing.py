@@ -53,6 +53,7 @@ from shapely.affinity import affine_transform
 
 # ── Local ─────────────────────────────────────────────────────────────────────
 from batch_axon.overlay.process_overlay_qupath import (
+    get_geojson_exclusion,
     get_geojson_region,
     points_in_region,
 )
