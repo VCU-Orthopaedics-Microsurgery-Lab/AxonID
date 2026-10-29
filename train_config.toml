@@ -1,0 +1,14 @@
+# Settings for non-interactive training:
+#     python -m train --config train_config.toml
+#
+# Only images_dir is required (a folder containing images/ and masks/).
+# Delete a line, or put # in front of it, to use the recipe default.
+# Model and training hyperparameters are fixed by the AxonID recipe
+# (utils/recipe.py); any other key is refused.
+
+images_dir   = 'YOUR_VALUE_HERE'   # single quotes keep Windows paths as typed: 'C:\Data\MyTraining'
+model_name   = ""                  # empty: axonid_user_<date>_<time>
+augmentation = false               # true: AxonID augmentation recipe
+epochs       = 400                 # upper limit; early stopping usually ends sooner
+batch_size   = 128                 # smaller if your GPU runs out of memory (recorded as a deviation)
+seed         = 1                   # controls split, augmentation and training order
