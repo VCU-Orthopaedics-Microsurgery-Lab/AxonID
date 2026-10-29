@@ -51,17 +51,19 @@ Other species, stains or magnifications may work but are not validated. You can 
 |---|---|
 | Operating system | Windows or Linux (macOS: CPU only, not tested) |
 | Python | 3.11 |
-| RAM | 8 GB minimum, 16 GB recommended (peak use measured at about 2 GB) |
+| RAM | 16 GB recommended (measured peak use is listed below) |
 | GPU | Optional. An NVIDIA GPU with a current driver makes segmentation faster and is needed for training your own model |
 
-**Measured speed** for one 1440 × 1024 px image at 40X. These are single runs on one dataset (12 images, 4,442 axons); other computers and images will differ.
+**Measured speed** for 1440 × 1024 px images at 40X. These are single runs, not benchmarks: the CPU row is 12 images (4,442 axons) on a desktop; the GPU row is three cohorts of 590, 599 and 563 images on a cluster node. Other computers and images will differ.
+ 
 
-| Hardware | Segmentation | Morphometrics | Peak RAM | Peak GPU memory |
+| Hardware | Segmentation (per image) | Morphometrics (per image) | Peak RAM | Peak GPU memory |
 |---|---|---|---|---|
-| CPU only: Intel Core i7-14700 (20 cores / 28 threads), 34 GB RAM | 21 s | 3 s | 1.7 GB (segment), 2.1 GB (morphometrics) | n/a |
-| GPU: NVIDIA H100 80 GB, YOUR_CPU_MODEL_CLUSTER | YOUR_VALUE_HERE | 3 s (same CPU code)* | YOUR_VALUE_HERE | YOUR_VALUE_HERE |
+| CPU only: Intel Core i7-14700 (20 cores / 28 threads), 34 GB RAM | 21 s | 3 s | 1.7 GB (segment), 2.1 GB (morphometrics); 12 images | n/a |
+| GPU: NVIDIA Tesla V100S 32 GB, AMD EPYC 7742 (4 cores allocated) | 2.2 s (excludes QC images, about 1 s more per image) | not measured on this node (CPU code) | 7.4-8.3 GB for 563-599 images in one job (segment) | 1.1 GB (upper bound) |
+ 
 
-Only segmentation uses the GPU; morphometrics and workbook compilation run on the CPU.
+Only segmentation uses the GPU; morphometrics and workbook compilation run on the CPU. Peak GPU memory was sampled every 2 s with `nvidia-smi` and includes PyTorch's cached memory, so it is an upper bound on what the model needs. Host RAM in the GPU row is for a whole cohort processed in one job; memory use for a single nerve was not measured.
 
 
 ### Install
